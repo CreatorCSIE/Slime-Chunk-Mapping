@@ -17,7 +17,7 @@
 # Releases
 * Just download from the [Releases](https://github.com/CreatorCSIE/Slime-Chunk-Mapping/releases).
 
-* Run this program by double clicks or `java -jar SlimeChunkMapping.jar` with Command Prompt.
+* Run this program by double clicks or `java -jar SlimeMapping.jar` with Command Prompt.
 
 # Build
 Just download the source code, or use git clone.
