@@ -17,7 +17,7 @@ Beta 1.2 ~ **???**
 # 发布
 * 在[Releases](https://github.com/CreatorCSIE/Slime-Chunk-Mapping/releases)下载已发布的版本。
 
-* 左键双击jar或者在命令提示符下用`java -jar SlimeChunkMapping.jar`运行此程序
+* 左键双击jar或者在命令提示符下用`java -jar SlimeMapping.jar`运行此程序
 
 # 构建
 下载这个项目的源代码（用git clone也可以），然后使用eclipse、IntelliJ IDEA等软件编译即可。
