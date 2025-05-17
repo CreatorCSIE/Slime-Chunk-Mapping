@@ -14,6 +14,9 @@
 # 适用范围
 Beta 1.2 ~ **???**
 
+# 程序截图
+![](screenshot.png)
+
 # 发布
 * 在[Releases](https://github.com/CreatorCSIE/Slime-Chunk-Mapping/releases)下载已发布的版本。
 
