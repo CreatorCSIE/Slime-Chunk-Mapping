@@ -1,384 +1,389 @@
 import javax.swing.*;
+import javax.swing.event.MouseInputAdapter;
 import java.awt.*;
-import java.awt.event.*;
-import java.awt.geom.*;
-import java.util.ArrayList;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+import java.awt.event.MouseWheelEvent;
+import java.awt.event.MouseWheelListener;
+import java.awt.geom.Rectangle2D;
 import java.util.List;
-import java.util.Random;
 
-public class CoordinateSystem extends JPanel implements MouseListener, MouseMotionListener, MouseWheelListener {
-
-    private double scale = 0.05;
-    private double offsetX = 0;
-    private double offsetY = 0;
-    private double debugMouseX;
-    private double debugMouseY;
-
-    private Point lastMouse;
-    private final List<Point2D.Double> points = new ArrayList<>();
-    Point2D.Double selectedPoint = null;
-
-    private static final int BASE_STEP = 512;
+public class CoordinateSystem extends JComponent {
+	private static final int BASE_UNIT = 16;
+    private static final Color GRID_COLOR = new Color(200, 200, 200,100);
+    private static final Color AXIS_COLOR = new Color(80, 80, 80);
     
-    private static final float COLOR_SATURATION = 0.8f;  // 饱和度保持较高
-    private static final float COLOR_BRIGHTNESS = 0.9f;  // 亮度稍高保证可见性
-
-    private Color generateUniqueColor(double x, double y) {
-        // 将坐标转换为唯一哈希值
-        long hash = Double.hashCode(x) ^ (Double.hashCode(y) << 17);
-        Random rand = new Random(hash);
-        
-        // 生成HSL颜色参数
-        float hue = rand.nextFloat();       // 0.0-1.0全色相范围
-        float saturation = COLOR_SATURATION - rand.nextFloat() * 0.2f; // ±10%饱和度变化
-        float brightness = COLOR_BRIGHTNESS - rand.nextFloat() * 0.1f; // ±5%亮度变化
-        
-        // 转换为RGB颜色
-        return Color.getHSBColor(hue, saturation, brightness);
-    }
+    private ChunkProvider chunkProvider;
     
-    private boolean renderLegacyBlueArea = true;
+    private double scale = 1.0;
+    private Point offset = new Point(0, 0);
+    private Point lastDragPoint;
+    private Point selectedWorldCoord = null;
     
-    public void setRenderLegacyBlueArea(boolean render) {
-        this.renderLegacyBlueArea = render;
-        repaint();
-    }
+    // 缩放限制
+    private static final double MIN_SCALE = 0.25;
+    private static final double MAX_SCALE = 10.0;
 
     public CoordinateSystem() {
-        setBackground(Color.WHITE);
-        addMouseListener(this);
-        addMouseMotionListener(this);
-        addMouseWheelListener(this);
-    }
-    
-    public interface PointProvider {
-        List<Point2D.Double> getVisiblePoints(double left, double right, double bottom, double top);
-    }
-
-    private PointProvider pointProvider;
-
-    public void setPointProvider(PointProvider provider) {
-        this.pointProvider = provider;
-    }
-
-    @Override
-    protected void paintComponent(Graphics g) {
-        super.paintComponent(g);
-
-        Graphics2D g2 = (Graphics2D) g.create();
-
-        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-
-        int w = getWidth();
-        int h = getHeight();
-
-        g2.translate(w / 2, h / 2);
-        g2.scale(-scale, -scale); // y向上，x向左为正
-        g2.translate(offsetX, offsetY);
-
-        drawQuadrants(g2, w, h);
-        drawGridAndAxes(g2, w, h);
-        drawPoints(g2);
-
-        g2.dispose();
-
-        drawLabels((Graphics2D) g, w, h);
-    }
-
-    private void drawQuadrants(Graphics2D g2, int w, int h) {
-        Composite original = g2.getComposite();
-        g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.5f));
-        g2.setColor(Color.PINK);
-
-        // 当前世界坐标边界
-        double worldLeft   = (-w / 2.0) / scale - offsetX;
-        double worldRight  = ( w / 2.0) / scale - offsetX;
-        double worldTop    = ( h / 2.0) / scale - offsetY;
-        double worldBottom = (-h / 2.0) / scale - offsetY;
-
-        // 第二象限：x < 0 && y > 0
-        if (worldLeft < 0 && worldTop > 0) {
-            double x = worldLeft;
-            double y = 0;
-            double width = Math.min(0, worldRight) - x;
-            double height = worldTop;
-            g2.fill(new Rectangle2D.Double(x, y, width, height));
-        }
-
-        // 第三象限：x < 0 && y < 0
-        if (worldLeft < 0 && worldBottom < 0) {
-            double x = worldLeft;
-            double y = worldBottom;
-            double width = Math.min(0, worldRight) - x;
-            double height = -y;
-            g2.fill(new Rectangle2D.Double(x, y, width, height));
-        }
-
-        // 第四象限：x > 0 && y < 0
-        if (worldRight > 0 && worldBottom < 0) {
-            double x = 0;
-            double y = worldBottom;
-            double width = worldRight - x;
-            double height = -y;
-            g2.fill(new Rectangle2D.Double(x, y, width, height));
-        }
-        
-        if (renderLegacyBlueArea) {
-            g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.35f));
-            g2.setColor(new Color(0, 0, 255));
-            
-            // 定义蓝色区域边界（X/Z范围-512到1024）
-            double blueLeft = -512;
-            double blueRight = 1024;
-            double blueBottom = -512;
-            double blueTop = 1024;
-
-            // 确定实际绘制范围
-            double renderLeft = Math.max(blueLeft, worldLeft);
-            double renderRight = Math.min(blueRight, worldRight);
-            double renderBottom = Math.max(blueBottom, worldBottom);
-            double renderTop = Math.min(blueTop, worldTop);
-
-            // 当可视区域与蓝色区域有交集时绘制
-            if (renderLeft < renderRight && renderBottom < renderTop) {
-                g2.fill(new Rectangle2D.Double(
-                    renderLeft,
-                    renderBottom,
-                    renderRight - renderLeft,
-                    renderTop - renderBottom
-                ));
-            }
-        }
-
-        g2.setComposite(original);
-    }
-
-    private void drawGridAndAxes(Graphics2D g2, int w, int h) {
-        g2.setStroke(new BasicStroke(1 / (float) scale));
-        g2.setColor(Color.LIGHT_GRAY);
-
-        double pixelStep = BASE_STEP * scale;
-        double step = BASE_STEP;
-
-        // 动态调整步长，使像素距离在合理范围
-        while (pixelStep < 30) {
-            step *= 2;
-            pixelStep = step * scale;
-        }
-        while (pixelStep > 150) {
-            step /= 2;
-            pixelStep = step * scale;
-        }
-
-        double left = (-w / 2.0) / scale - offsetX;
-        double right = (w / 2.0) / scale - offsetX;
-        double top = (h / 2.0) / scale - offsetY;
-        double bottom = (-h / 2.0) / scale - offsetY;
-
-        // 垂直网格线（X方向）
-        for (double x = Math.floor(left / step) * step; x <= right; x += step) {
-            g2.draw(new Line2D.Double(x, bottom, x, top));
-        }
-
-        // 水平网格线（Y方向）
-        for (double y = Math.floor(bottom / step) * step; y <= top; y += step) {
-            g2.draw(new Line2D.Double(left, y, right, y));
-        }
-
-        // 坐标轴
-        g2.setColor(Color.BLACK);
-        g2.setStroke(new BasicStroke(2 / (float) scale));
-        g2.draw(new Line2D.Double(left, 0, right, 0)); // X轴
-        g2.draw(new Line2D.Double(0, bottom, 0, top)); // Y轴
-    }
-
-    private void drawLabels(Graphics2D g, int w, int h) {
-        g.setColor(Color.BLACK);
-        g.setFont(new Font("Arial", Font.PLAIN, 12));
-
-        double step = BASE_STEP;
-        double pixelStep = step * scale;
-        while (pixelStep < 30) {
-            step *= 2;
-            pixelStep = step * scale;
-        }
-        while (pixelStep > 150) {
-            step /= 2;
-            pixelStep = step * scale;
-        }
-
-        // 遍历坐标轴刻度
-        double left = (-w / 2.0) / scale - offsetX;
-        double right = (w / 2.0) / scale - offsetX;
-        double top = (h / 2.0) / scale - offsetY;
-        double bottom = (-h / 2.0) / scale - offsetY;
-
-        // X轴刻度
-        for (double x = Math.floor(left / step) * step; x <= right; x += step) {
-            if (Math.abs(x) < 1e-6) continue;
-            Point p = worldToScreen(x, 0, w, h);
-            g.drawString(String.format("%.0f", x), p.x - 10, p.y + 15);
-        }
-
-        // Y轴刻度
-        for (double y = Math.floor(bottom / step) * step; y <= top; y += step) {
-            if (Math.abs(y) < 1e-6) continue;
-            Point p = worldToScreen(0, y, w, h);
-            g.drawString(String.format("%.0f", y), p.x + 5, p.y + 5);
-        }
-
-        // 绘制选中点坐标
-        if (selectedPoint != null) {
-            Point p = worldToScreen(selectedPoint.x, selectedPoint.y, w, h);
-            g.setColor(Color.BLUE);
-            g.drawString(String.format("(%.0f, %.0f)", selectedPoint.x, selectedPoint.y), p.x + 5, p.y - 5);
-        }
-        
-        Point2D.Double viewportCenter = screenToWorld(w/2, h/2);
-        
-        g.setFont(new Font("微软雅黑", Font.PLAIN, 12));
-        FontMetrics fm = g.getFontMetrics();
-        String debugText = String.format("缩放倍数：%.2f  视点坐标：(%.0f, %.0f)", 
-                          scale, viewportCenter.x, viewportCenter.y);
-        int x = 10;
-        int y = h - fm.getDescent() - 5;
-        g.drawString(debugText, x, y);
-    }
-
-    private void drawPoints(Graphics2D g2) {
-    	if (pointProvider == null) return;
-    	
-    	int w = getWidth();
-        int h = getHeight();
-        double left = (-w / 2.0) / scale - offsetX;
-        double right = (w / 2.0) / scale - offsetX;
-        double top = (h / 2.0) / scale - offsetY;
-        double bottom = (-h / 2.0) / scale - offsetY;
-        
-        List<Point2D.Double> visiblePoints = pointProvider.getVisiblePoints(left, right, bottom, top);
-    	
-        double r = 10 / scale;
-        for (Point2D.Double pt : visiblePoints) {
-        	int chunkX = (int)(pt.x) >> 10; // 等价于除以1024
-            int chunkZ = (int)(pt.y) >> 10;
-            
-            g2.setColor(pt.equals(selectedPoint) ? 
-                    Color.BLUE : 
-                    generateUniqueColor(pt.x, pt.y));
-            g2.fill(new Ellipse2D.Double(pt.x - r / 2, pt.y - r / 2, r, r));
-        }
-    }
-
-    private Point2D.Double screenToWorld(int x, int y) {
-        // 修正Y轴坐标转换
-        double wx = -(x - getWidth() / 2.0) / scale - offsetX;
-        double wy = (getHeight() / 2.0 - y) / scale - offsetY - 10;
-        return new Point2D.Double(wx, wy);
-    }
-
-    private Point worldToScreen(double wx, double wy, int w, int h) {
-        // 修正Y轴坐标转换
-        int sx = (int) ((-wx - offsetX) * scale + w / 2.0);
-        int sy = (int) (h / 2.0 - (wy + offsetY) * scale);
-        return new Point(sx, sy);
-    }
-
-    @Override
-    public void mousePressed(MouseEvent e) {
-        lastMouse = e.getPoint();
-    }
-
-    @Override
-    public void mouseDragged(MouseEvent e) {
-        Point p = e.getPoint();
-        double dx = (p.x - lastMouse.x) / scale;
-        double dy = (p.y - lastMouse.y) / scale;
-        offsetX -= dx;
-        offsetY -= dy;
-        lastMouse = p;
-        repaint();
-    }
-
-    @Override
-    public void mouseWheelMoved(MouseWheelEvent e) {
-        double factor = Math.pow(1.1, -e.getPreciseWheelRotation());
-        Point p = e.getPoint();
-        Point2D.Double beforeZoom = screenToWorld(p.x, p.y);
-
-        scale *= factor;
-        if (scale < 0.05) scale = 0.05;
-        if (scale > 0.25) scale = 0.25;
-
-        Point2D.Double afterZoom = screenToWorld(p.x, p.y);
-        offsetX += (afterZoom.x - beforeZoom.x);
-        offsetY += (afterZoom.y - beforeZoom.y);
-
-        repaint();
-    }
-
-    @Override
-    public void mouseClicked(MouseEvent e) {
-        Point2D.Double world = screenToWorld(e.getX(), e.getY());
-
-        if (SwingUtilities.isLeftMouseButton(e)) {
-            selectedPoint = null;
-            if (pointProvider != null) {
-                int w = getWidth();
-                int h = getHeight();
-                double left = (-w / 2.0) / scale - offsetX;
-                double right = (w / 2.0) / scale - offsetX;
-                double bottom = (-h / 2.0) / scale - offsetY;
-                double top = (h / 2.0) / scale - offsetY;
-
-                List<Point2D.Double> visiblePoints = pointProvider.getVisiblePoints(left, right, bottom, top);
-                double threshold = 10 / scale; // 匹配点的实际半径
-
-                for (Point2D.Double pt : visiblePoints) {
-                    if (world.distance(pt) < threshold) {
-                        selectedPoint = pt;
-                        break;
-                    }
+    	addComponentListener(new ComponentAdapter() {
+            public void componentResized(ComponentEvent e) {
+                // 只在首次获得有效尺寸时初始化原点
+                if (getWidth() > 0 && getHeight() > 0 && offset.equals(new Point(0, 0))) {
+                    setOffset(new Point(getWidth()/2, getHeight()/2));
                 }
             }
-            repaint();
+        });
+    	addMouseWheelListener(e -> handleMouseWheel(e));
+        addMouseListener(new MouseAdapter() {
+            @Override
+            public void mousePressed(MouseEvent e) {
+                lastDragPoint = e.getPoint();
+            }
+        });
+        addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                if (SwingUtilities.isLeftMouseButton(e)) {
+                    // 转换坐标：屏幕坐标 → 世界坐标
+                	int worldX = (int) Math.floor((e.getX() - offset.x) / (BASE_UNIT * scale));
+                    int worldZ = (int) Math.floor((e.getY() - offset.y) / (BASE_UNIT * scale));
+                    if (selectedWorldCoord != null && selectedWorldCoord.x == worldX && selectedWorldCoord.y == worldZ) {
+                        selectedWorldCoord = null;
+                    } else {
+                        // 否则，更新选中的坐标
+                        selectedWorldCoord = new Point(worldX, worldZ);
+                    }
+                    repaint();
+                }
+            }
+        });
+        addMouseMotionListener(new MouseInputAdapter() {
+            @Override
+            public void mouseDragged(MouseEvent e) {
+                Point current = e.getPoint();
+                int dx = current.x - lastDragPoint.x;
+                int dy = current.y - lastDragPoint.y;
+                offset.translate(dx, dy);
+                lastDragPoint = current;
+                repaint();
+            }
+        });
+    }
+    
+    public double getScale() {
+        return scale;
+    }
+    
+    public Point getOffset() {
+        return new Point(offset);
+    }
+
+    public interface ChunkProvider {
+        List<ChunkData> getVisibleChunks(double left, double right, double top, double bottom);
+    }
+    
+
+    public static class ChunkData {
+        public final int x;      // 方块坐标起点X
+        public final int z;      // 方块坐标起点Z
+        public final int width;  // 宽度（方块单位）
+        public final int height; // 高度（方块单位）
+        public final Color color;
+
+        public ChunkData(int x, int z, int width, int height, Color color) {
+            this.x = x;
+            this.z = z;
+            this.width = width;
+            this.height = height;
+            this.color = color;
         }
     }
     
-    public void addPoint(double x, double y) {
-        points.add(new Point2D.Double(x, y));
+
+    public void setChunkProvider(ChunkProvider provider) {
+        this.chunkProvider = provider;
+    }
+    
+    private int visibleLeft, visibleRight, visibleTop, visibleBottom;
+
+    public void setVisibleArea(int left, int right, int top, int bottom) {
+        this.visibleLeft = left;
+        this.visibleRight = right;
+        this.visibleTop = top;
+        this.visibleBottom = bottom;
+        revalidate();
         repaint();
     }
 
-    public void clearPoints() {
-        points.clear();
-        selectedPoint = null;
-        repaint();
-    }
+    Rectangle visRect = new Rectangle(0, 0, getWidth(), getHeight());
 
-    public void setViewport(double centerX, double centerY, double zoomLevel) {
-        scale = zoomLevel;
-        offsetX = -centerX;
-        offsetY = -centerY;
+    public void setOffset(Point offset) {
+        this.offset = offset;
+        revalidate();
         repaint();
     }
     
-    public void resetViewport() {
-        scale = 0.05;
-        offsetX = 0;
-        offsetY = 0;
-        selectedPoint = null;
+    private void handleMouseWheel(MouseWheelEvent e) {
+        double oldScale = scale;
+        double scaleFactor = e.getWheelRotation() < 0 ? 1.1 : 0.9;
+        setScale(scale * scaleFactor);
+        
+        // 保持缩放中心点
+        Point point = e.getPoint();
+        offset.x = (int) (point.x - (point.x - offset.x) * (scale / oldScale));
+        offset.y = (int) (point.y - (point.y - offset.y) * (scale / oldScale));
+    }
+
+    protected void paintComponent(Graphics g) {
+        super.paintComponent(g);
+        Graphics2D g2d = (Graphics2D) g.create();
+
+        // 1. 绘制白色背景
+        g2d.setColor(Color.WHITE);
+        g2d.fillRect(0, 0, getWidth(), getHeight());
+
+        // 2. 绘制区块（先于网格和坐标轴）
+        drawChunks(g2d);
+
+        // 3. 绘制网格
+        drawGrid(g2d);
+
+        // 4. 最后绘制坐标轴（保证在最上层）
+        drawAxis(g2d); 
+        
+        if (selectedWorldCoord != null) {
+            drawSelectedCoord(g);
+        }
+        
+        drawDebugInfo(g2d);
+        
+        g2d.dispose();
+    }
+    
+    private void drawDebugInfo(Graphics2D g) {
+    	// 设置字体
+        Font debugFont = new Font("微软雅黑", Font.PLAIN, 12);
+        g.setFont(debugFont);
+        g.setColor(Color.BLACK);
+        Point centerWorld = screenToWorld(getWidth()/2, getHeight()/2);
+        
+        // 获取当前缩放倍数和视点坐标
+        String debugText = String.format("缩放倍数: %.2f, 视点坐标: (%d, %d)", scale, centerWorld.x, centerWorld.y);
+        
+        // 绘制调试信息
+        g.drawString(debugText, 10, getHeight() - 10);  // 距离底部10像素位置
+    }
+    
+
+    private void drawGrid(Graphics2D g) {
+        g.setColor(GRID_COLOR);
+        
+        Rectangle visRect = getVisibleRect();
+        double[] visibleArea = calculateVisibleArea(visRect);
+        
+        int step = calculateGridStep();
+        int startX = (int) (Math.floor(visibleArea[0] / step) * step);
+        int endX = (int) (Math.ceil(visibleArea[1] / step) * step);
+        int startZ = (int) (Math.floor(visibleArea[2] / step) * step);
+        int endZ = (int) (Math.ceil(visibleArea[3] / step) * step);
+
+        // 绘制水平网格
+        for (int x = startX; x <= endX; x += step) {
+            int screenX = (int) (x * BASE_UNIT * scale + offset.x);
+            drawDashedLine(g, screenX, 0, screenX, getHeight());
+        }
+
+        // 绘制垂直网格
+        for (int z = startZ; z <= endZ; z += step) {
+            int screenZ = (int) (z * BASE_UNIT * scale + offset.y);
+            drawDashedLine(g, 0, screenZ, getWidth(), screenZ);
+        }
+    }
+    
+
+    private void drawAxis(Graphics2D g) {
+        g.setColor(AXIS_COLOR);
+        Stroke axisStroke = new BasicStroke(2);
+        g.setStroke(axisStroke);
+        
+        // 计算原点在屏幕上的位置
+        int originX = (int) offset.x;
+        int originZ = (int) offset.y;
+        
+        // 绘制X轴（水平轴）
+        g.drawLine(0, originZ, getWidth(), originZ);
+        
+        // 绘制Z轴（垂直轴）
+        g.drawLine(originX, 0, originX, getHeight());
+        
+        // 绘制刻度
+        drawAxisTicks(g, originX, originZ);
+    }
+
+    private void drawAxisTicks(Graphics2D g, int originX, int originZ) {
+    	Font labelFont = new Font("Arial", Font.BOLD, 14); // 选择加粗且更大的字体
+        g.setFont(labelFont);
+        
+        Rectangle visRect = getVisibleRect();
+        double[] visibleArea = calculateVisibleArea(visRect);
+        int step = calculateGridStep();
+        
+        // X轴刻度
+        int startX = (int) (Math.floor(visibleArea[0] / step) * step);
+        int endX = (int) (Math.ceil(visibleArea[1] / step) * step);
+        for (int x = startX; x <= endX; x += step) {
+            int screenX = (int) (x * BASE_UNIT * scale + offset.x);
+            g.drawLine(screenX, originZ - 3, screenX, originZ + 3);
+            drawCenteredString(g, String.valueOf(x * 16), screenX, originZ + 15);
+        }
+
+        // Z轴刻度
+        int startZ = (int) (Math.floor(visibleArea[2] / step) * step);
+        int endZ = (int) (Math.ceil(visibleArea[3] / step) * step);
+        for (int z = startZ; z <= endZ; z += step) {
+            int screenZ = (int) (z * BASE_UNIT * scale + offset.y);
+            g.drawLine(originX - 3, screenZ, originX + 3, screenZ);
+            drawCenteredString(g, String.valueOf(z * 16), originX - 10, screenZ - 5);
+        }
+    }
+    
+    private void drawSelectedCoord(Graphics g) {
+        Graphics2D g2d = (Graphics2D) g.create();
+        g2d.setColor(new Color(255, 0, 0, 100));
+        
+        // 计算选中区块的屏幕坐标
+        int x = (int) (selectedWorldCoord.x * 16 * scale + offset.x);
+        int z = (int) (selectedWorldCoord.y * 16 * scale + offset.y);
+        int size = (int) (16 * scale);
+        
+        // 绘制半透明红色覆盖层
+        g2d.fillRect(x, z, size, size);
+        
+        g2d.setColor(new Color(100, 100, 100)); // 灰色字体
+        g2d.setFont(new Font("微软雅黑", Font.PLAIN, 14));
+        
+        // 绘制坐标文本
+        String coordText = String.format("已选中区域坐标：(%d, %d) 区块坐标：(%d,%d)", 
+                selectedWorldCoord.x * 16, 
+                selectedWorldCoord.y * 16,
+                selectedWorldCoord.x,
+                selectedWorldCoord.y
+                );
+            
+        g2d.drawString(coordText, 10, 20);
+    }
+
+    private void drawDashedLine(Graphics g, int x1, int y1, int x2, int y2) {
+        Stroke dashed = new BasicStroke(1, BasicStroke.CAP_BUTT, BasicStroke.JOIN_BEVEL,
+                0, new float[]{4}, 0);
+        Graphics2D g2d = (Graphics2D) g.create();
+        g2d.setStroke(dashed);
+        g2d.drawLine(x1, y1, x2, y2);
+        g2d.dispose();
+    }
+
+    private void drawCenteredString(Graphics g, String text, int x, int y) {
+        FontMetrics fm = g.getFontMetrics();
+        int width = fm.stringWidth(text);
+        g.drawString(text, x - width/2, y);
+    }
+
+    private int calculateGridStep() {
+        double scaledUnit = BASE_UNIT * scale;
+        if (scaledUnit > 128) return 1;
+        if (scaledUnit > 64) return 2;
+        if (scaledUnit > 32) return 4;
+        return 8;
+    }
+
+    private double[] calculateVisibleArea(Rectangle visRect) {
+        return new double[] {
+            (visRect.x - offset.x) / (BASE_UNIT * scale),
+            (visRect.x + visRect.width - offset.x) / (BASE_UNIT * scale),
+            (visRect.y - offset.y) / (BASE_UNIT * scale),
+            (visRect.y + visRect.height - offset.y) / (BASE_UNIT * scale)
+        };
+    }
+
+    private void drawChunks(Graphics2D g) {
+        Rectangle visRect = getVisibleRect();
+        double[] worldBounds = {
+            (visRect.x - offset.x) / scale,    // left
+            (visRect.x + visRect.width - offset.x) / scale, // right
+            (visRect.y - offset.y) / scale,    // top
+            (visRect.y + visRect.height - offset.y) / scale  // bottom
+        };
+
+        for (ChunkData chunk : chunkProvider.getVisibleChunks(
+            worldBounds[0], worldBounds[1], worldBounds[2], worldBounds[3])) 
+        {
+        	double screenX = offset.x + (chunk.x / 16) * 16 * scale; // chunk.x为方块坐标需转区块坐标
+        	double screenZ = offset.y + (chunk.z / 16) * 16 * scale;
+        	double screenW = chunk.width * BASE_UNIT * scale / 16.0;
+        	double screenH = chunk.height * BASE_UNIT * scale / 16.0;
+        	
+            // 抗锯齿处理（保持图片中的清晰边缘）
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
+            
+            // 绘制填充区域（完全覆盖16x16网格）
+            g.setColor(chunk.color);
+            g.fillRect((int)screenX, (int)screenZ, (int)Math.ceil(screenW), (int)Math.ceil(screenH));
+            
+            // 绘制细边框（与图片中的灰色线条一致）
+            g.setColor(new Color(80, 80, 80, 30));
+            g.drawRect((int)screenX, (int)screenZ, (int)screenW, (int)screenH);
+        }
+    }
+
+    public void setScale(double newScale) {
+        scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, newScale));
+        revalidate();
+        repaint();
+    }
+    
+    public Point worldToScreen(int worldX, int worldZ) {
+        return new Point(
+            (int)(worldX * scale) + offset.x,
+            (int)(worldZ * scale) + offset.y
+        );
+    }
+    
+    public Point screenToWorld(int screenX, int screenZ) {
+        return new Point(
+            (int)((screenX - offset.x) / scale),
+            (int)((screenZ - offset.y) / scale)
+        );
+    }
+    
+    public void setSelectedChunk(int chunkX, int chunkZ) {
+        this.selectedWorldCoord = new Point(chunkX, chunkZ);
+    }
+
+    public void deselect() {
+    	if (selectedWorldCoord != null) {
+    		selectedWorldCoord = null;
+        	repaint();
+    	}
+    }
+    
+    public void resetViewpoint() {
+        // 计算屏幕中心作为原点
+        Point center = new Point(getWidth()/2, getHeight()/2);
+        
+        // 根据图片中的缩放比例1.00设置
+        this.scale = 1.0;
+        
+        // 精确对应图片中的视点定位逻辑
+        this.offset = new Point(
+            center.x - (int)(0 * scale), // X=0的世界坐标偏移
+            center.y - (int)(0 * scale)  // Z=0的世界坐标偏移
+        );
+        
+        // 强制重绘
+        revalidate();
         repaint();
     }
 
-    public void centerOn(double worldX, double worldY) {
-        offsetX = -worldX;
-        offsetY = -worldY;
-        repaint();
-    }
-
-    // Unused
-    @Override public void mouseReleased(MouseEvent e) {}
-    @Override public void mouseEntered(MouseEvent e) {}
-    @Override public void mouseExited(MouseEvent e) {}
-    @Override public void mouseMoved(MouseEvent e) {}
 }
