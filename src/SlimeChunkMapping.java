@@ -104,7 +104,8 @@ public class SlimeChunkMapping extends JFrame {
         randomButton.addActionListener(e -> {
             generateRandomSeed();
             coordSystem.deselect();
-            ensureChunkVisible(0,0);
+            coordSystem.setScale(1);
+            coordSystem.resetViewpoint();
             coordSystem.repaint();
         });
 
@@ -203,7 +204,8 @@ public class SlimeChunkMapping extends JFrame {
             currentSeed = Long.parseLong(seedText);
             seedField.setText(Long.toString(currentSeed)); // 确保输入框同步
             coordSystem.deselect();
-            ensureChunkVisible(0,0);
+            coordSystem.setScale(1);
+            coordSystem.resetViewpoint();
             coordSystem.repaint();
             System.out.println("Seed updated and view reset to origin.");
         } catch (NumberFormatException ex) {
