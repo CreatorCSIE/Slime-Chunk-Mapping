@@ -39,7 +39,7 @@ public class SlimeChunkMapping extends JFrame {
         gbc.gridx = 0;
 
         JLabel authorLabel = new JLabel("Made by CreatorCSIE");
-        JLabel versionLabel = new JLabel("版本：1.0");
+        JLabel versionLabel = new JLabel("版本：1.1");
         authorLabel.setFont(new Font("Microsoft YaHei", Font.PLAIN, 12));
         versionLabel.setFont(new Font("Microsoft YaHei", Font.PLAIN, 12));
 
