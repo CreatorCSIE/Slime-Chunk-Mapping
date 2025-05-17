@@ -14,6 +14,9 @@
 # Available in these versions
 * Beta 1.2_01 to **???**
 
+# Screenshot
+![](screenshot.png)
+
 # Releases
 * Just download from the [Releases](https://github.com/CreatorCSIE/Slime-Chunk-Mapping/releases).
 
