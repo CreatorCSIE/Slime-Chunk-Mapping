@@ -12,7 +12,7 @@
 * You can input your own seed.
 
 # Available in these versions
-* Beta 1.2_01 to **???**
+* Alpha v1.0.14 to **???**
 
 # Screenshot
 ![](screenshot.png)
